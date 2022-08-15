@@ -61,3 +61,9 @@ action_links <- action_links %>%
 # Bulk download files
 Map(function(u, d) safely(download.file(u, d, mode="wb")), action_links$pdf_link, action_links$dests)
 ```
+
+```{r}
+# Check the number of PDF files
+
+str_detect(list.files(here("outputs")), "pdf") %>% sum() # 1,230 pdf files
+```
