@@ -33,6 +33,8 @@ df$text <- tm::removeWords(df$text, words = c(stopwords(source = "snowball")))
 options("mc.cores" = 4)
 
 # documents to corpus
+minhash <- minhash_generator(200, seed = 235)
+
 corpus <- textreuse::TextReuseCorpus(
   text = df$text, 
   tokenizer = tokenize_ngrams, n = 5, 
