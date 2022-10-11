@@ -28,24 +28,46 @@ df$text <- tm::removeWords(df$text, words = c(stopwords(source = "snowball")))
 
 # Text reuse
 
+- Useful tutorial: https://bookdown.org/yann_ryan/r-for-newspaper-data/detecting-text-reuse-in-newspaper-articles-.html
+
 ```{r}
 # parallelization 
-options("mc.cores" = 4)
+options("mc.cores" = 6)
+
+# hash the n-gram : each one is given a numerical code, less memory heavy. Randomly selects 2,000 hashes
+minhash <- minhash_generator(n = 2000, seed = 1234)
 
 # documents to corpus
-minhash <- minhash_generator(200, seed = 235)
-
 corpus <- textreuse::TextReuseCorpus(
   text = df$text, 
-  tokenizer = tokenize_ngrams, n = 5, 
-  minhash_func = minhash, # minhashing
-  meta = list(df$name))
+  tokenizer = tokenize_ngrams, n = 3, 
+  minhash_func = minhash, 
+  keep_tokens = FALSE) # no point for keeping tokens
 
+file_names <- df$name
+
+file_names <- file_names %>%
+  str_replace_all(".pdf", "") %>%
+  str_replace_all(".docx", "") %>%
+  str_replace_all("-Action-Plan-", "") %>%
+  str_replace_all("Action-Plan-", "")
+
+names(corpus) <- file_names
+```
+
+```{r}
 # minhash and locality sensitive hashing algorithms
-buckets <- lsh(corpus, bands = 50, progress = FALSE)
+
+buckets <- lsh(corpus, bands = 1000, progress = FALSE) # 1,000 bands for 2 rows each
 
 candidates <- lsh_candidates(buckets)
 
-scores <- lsh_compare(candidates, corpus, jaccard_similarity, progress = FALSE)
+jacsimilarity_both <- lsh_compare(
+  candidates, 
+  corpus, 
+  jaccard_similarity) %>% # counts the number of shared hashes
+  arrange(desc(score))
+
+jacsimilarity_both
 ```
 
