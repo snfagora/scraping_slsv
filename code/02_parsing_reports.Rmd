@@ -1,0 +1,132 @@
+---
+title: "Parsing texts"
+author: "Jae Yeon Kim"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Install pkgs 
+
+```{r}
+#remotes::install_github(c("ropensci/tabulizerjars", "ropensci/tabulizer"))
+
+#devtools::install_github("hegghammer/daiR")
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tesseract, magick, zoo, parallel, pdftools, naniar, tidyverse, here, glue, purrr, stringr, tabulizer, daiR)
+
+source(here("functions", "utils.R"))
+```
+
+# Load data 
+
+```{r}
+file_lists <- list.files(here("outputs"))
+
+target <- file_lists[str_detect(tolower(file_lists), "nslve") & !str_detect(tolower(file_lists), "json")]
+
+sum(str_detect(tolower(file_lists), "nslve")) # 1,286 NSLVE reports (1,288 - 2)
+```
+
+# Parse text 
+
+## Test version
+
+```{r}
+target_text <- here("outputs", target[1])
+
+max_n <- get_n_pages(target_text)
+
+text <- tabulizer::extract_tables(target_text,
+                                  guess = FALSE,
+                                  pages = 2:(max_n-1),
+                                  output = "data.frame")
+
+text[[9]] 
+```
+
+```{r}
+areas <- locate_areas(target_text)
+
+target_table <- extract_tables(file = target_text, area = areas, method = "stream")
+
+target_table
+```
+
+```{r}
+# collapse list elements into one vector 
+text <- paste(text, collapse = "\n") 
+
+# replace special characters with one space
+text <- gsub("[[:punct:]]", " ", text)
+
+# remove excess white space 
+text <- gsub("\\s+", " ", text)
+
+# lower case
+text <- tolower(text)
+
+# a dataframe that combines text and filename vectors
+
+df <- tibble(text = text,
+             name = file_lists[1])
+```
+
+## Function 
+
+```{r}
+parse_text <- function(target) {
+
+  target_text <- here("outputs", target)
+
+  text <- pdftools::pdf_text(target_text) 
+
+  # collapse list elements into one vector 
+  text <- paste(text, collapse = "\n") 
+
+  # replace special characters with one space
+  text <- gsub("[[:punct:]]", " ", text)
+
+  # remove excess white space 
+  text <- gsub("\\s+", " ", text)
+
+  # lower case
+  text <- tolower(text)
+
+  # a dataframe that combines text and filename vectors
+  df <- tibble(text = text,
+               name = target)
+  
+  return(df)
+}
+```
+
+## Map 
+
+```{r}
+# Map file lists to parse text 
+parsed_df <- map_dfr(file_lists, parse_text)
+
+# Identify and filter failed PDF parsed results 
+test_text <- function(i) {
+  
+  out <- substr(parsed_df$text[i], start = 1 , stop = 20)
+  
+  return(out)
+  
+  }
+
+parsed_text <- purrr::map_chr(seq(parsed_df$text), test_text)
+
+length(parsed_text) # 1,230
+
+log_filters <- !(str_count(parsed_text) %in% c(1,0))
+
+filtered_df <- parsed_df[log_filters,] # 1,226
+```
+
+# Export the file
+
+```{r}
+write_csv(filtered_df, here("outputs", "filtered_df.csv"))
+#write_rds(filtered_df, here("outputs", "filtered_df.rds"))
+```

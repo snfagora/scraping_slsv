@@ -1,0 +1,68 @@
+---
+title: "Scraping campus"
+author: "Jae Yeon Kim"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Install pkgs 
+
+```{r}
+if (!require(pacman)) install.packages("pacman")
+
+pacman::p_load(httr, purrr, here, tidyverse,
+               stringr, glue, rvest, 
+               jsonlite, 
+               xml2)
+
+source(here("functions", "utils.R"))
+```
+
+# Parse websites
+
+## Extract links from the main webpage 
+
+```{r}
+# target URL (the main webpage)
+
+url <- "https://allinchallenge.org/participating-campuses/"
+
+# extract links
+
+hrefs <- extract_url(url)
+```
+
+## Filter the relevant links and find the PDF links
+
+```{r}
+# Relevant links
+
+rev_links <- hrefs[str_detect(hrefs, "/campuses/")]
+
+# Relevant PDF links (only Action plans))
+
+rep_links <- map_dfr(rev_links, extract_stat)
+
+rep_links <- rep_links %>%
+  filter(!is.na(pdf_link))
+
+write_csv(rep_links, here("outputs", "rep_links.csv"))
+```
+
+# Download PDF files
+
+```{r}
+rep_links$college %>% unique() %>% length() # 603 college campuses
+
+rep_links <- rep_links %>%
+  mutate(dests = glue("{here('outputs', rep_links$pdf_link)}"), 
+         dests = str_remove_all(dests, "https://allinchallenge.org/wp-content/uploads/"))
+
+# Bulk download files
+Map(function(u, d) safely(download.file(u, d, mode="wb")), rep_links$pdf_link, rep_links$dests)
+```
+
+```{r}
+# Check the number of PDF files
+str_detect(tolower(list.files(here("outputs"))), "nslve") %>% sum() # 1,286 pdf files
+```
