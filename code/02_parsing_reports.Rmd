@@ -9,10 +9,11 @@ output: html_document
 
 ```{r}
 #remotes::install_github(c("ropensci/tabulizerjars", "ropensci/tabulizer"))
-
 #devtools::install_github("hegghammer/daiR")
+#devtools::install_github("daniel1noble/metaDigitise")
+
 if(!require(pacman)) install.packages("pacman")
-pacman::p_load(tesseract, magick, zoo, parallel, pdftools, naniar, tidyverse, here, glue, purrr, stringr, tabulizer, daiR)
+pacman::p_load(tesseract, magick, zoo, parallel, pdftools, naniar, tidyverse, here, glue, purrr, stringr, stringi, tabulizer, daiR, metaDigitise)
 
 source(here("functions", "utils.R"))
 ```
@@ -24,79 +25,195 @@ file_lists <- list.files(here("outputs"))
 
 target <- file_lists[str_detect(tolower(file_lists), "nslve") & !str_detect(tolower(file_lists), "json")]
 
-sum(str_detect(tolower(file_lists), "nslve")) # 1,286 NSLVE reports (1,288 - 2)
+sum(str_detect(tolower(file_lists), "nslve")) - 2 # 1,286 NSLVE reports (1,288 - 2)
 ```
 
-# Parse text 
+# Parse report
 
 ## Test version
 
 ```{r}
-target_text <- here("outputs", target[1])
+# file path
+## tested: target[1], target[2], target[5]
+target_text <- here("outputs", target[2])
 
-max_n <- get_n_pages(target_text)
+# extract text (a list object)
+text <- pdftools::pdf_text(target_text)
 
-text <- tabulizer::extract_tables(target_text,
-                                  guess = FALSE,
-                                  pages = 2:(max_n-1),
-                                  output = "data.frame")
+# lower case the texts 
+lower_text <- map(text, tolower)
 
-text[[9]] 
-```
+# find the page that contains the target pattern: "registration rate"
+pos <- which(str_detect(lower_text, "registration rate"))
+     
+# drop the first page (unlikely to have the registration change graph)
+tp <- pos[! pos %in% c(1)]
 
-```{r}
-areas <- locate_areas(target_text)
+# turn list into character vector
+raw_text <- lower_text[[tp]] %>%
+  str_split("\n") %>%
+  unlist()
 
-target_table <- extract_tables(file = target_text, area = areas, method = "stream")
+# find the start and last line (element) of the plot
+first <- which(str_detect(raw_text, "   100"))
+last <- which(str_detect(raw_text, "   0"))
 
-target_table
-```
+# years
+years <- raw_text[(last+1):(last+2)] %>% 
+  str_split(" ") %>%
+  unlist() %>%
+  stri_remove_empty() %>%
+  unique() %>%
+  as.numeric()
 
-```{r}
-# collapse list elements into one vector 
-text <- paste(text, collapse = "\n") 
+years <- years[order(years)]
 
-# replace special characters with one space
-text <- gsub("[[:punct:]]", " ", text)
+# isolate the estimates 
+table <- raw_text[first:last]
+table <- table[str_detect(table, "%")]
 
-# remove excess white space 
-text <- gsub("\\s+", " ", text)
+# remove the axis 
+axis <- seq(from = 10, to = 100, by = 10)
+axis <- paste(axis, collapse = "  |  ")
 
-# lower case
-text <- tolower(text)
+table <- str_replace_all(table, axis, "")
 
-# a dataframe that combines text and filename vectors
+scores <- table %>%
+  str_trim() %>%
+  str_split(" ") %>%
+  unlist() %>%
+  stri_remove_empty() %>%
+  parse_number()
 
-df <- tibble(text = text,
-             name = file_lists[1])
+type <- rep(seq(length(scores)/length(years)), each = length(years))
+
+if (length(years) < length(scores)) {
+  
+  new_years <- rep(years, (length(scores) * length(years))/length(years))
+
+  new_scores <- rep(scores, each = (length(years) * length(scores))/length(scores))      
+  
+  final_df <- data.frame(year = new_years,
+                         score = new_scores,
+                         type =     rep(unique(seq(scores)), each = length(new_scores)/length(scores))) %>%
+        mutate(type = case_when(type == 1 ~ "registration_rate",
+                            type == 2 ~ "voting_rate_of_registered_students",
+                            type == 3 ~ "voting_rate")) 
+      
+  final_df$score[!duplicated(final_df$score)] <- NA
+       
+  final_df <- final_df %>%
+    select(year, score, type)
+}
+
+# Warning: I made a very strong assumption that all scores increase over years.
+final_df <- data.frame(score = scores, 
+           type = type) %>%
+  group_by(type) %>%
+  arrange(scores) %>%
+  ungroup() %>%
+  mutate(year = rep(years, length(scores)/length(years))) %>%
+  mutate(type = case_when(type == 1 ~ "registration_rate",
+                          type == 2 ~ "voting_rate_of_registered_students",
+                          type == 3 ~ "voting_rate"))
 ```
 
 ## Function 
 
 ```{r}
-parse_text <- function(target) {
+parse_report <- function(target) {
 
+  # file path
+  ## tested: target[1], target[2], target[5]
   target_text <- here("outputs", target)
-
-  text <- pdftools::pdf_text(target_text) 
-
-  # collapse list elements into one vector 
-  text <- paste(text, collapse = "\n") 
-
-  # replace special characters with one space
-  text <- gsub("[[:punct:]]", " ", text)
-
-  # remove excess white space 
-  text <- gsub("\\s+", " ", text)
-
-  # lower case
-  text <- tolower(text)
-
-  # a dataframe that combines text and filename vectors
-  df <- tibble(text = text,
-               name = target)
   
-  return(df)
+  # extract text (a list object)
+  text <- pdftools::pdf_text(target_text)
+  
+  # lower case the texts 
+  lower_text <- map(text, tolower)
+  
+  # find the page that contains the target pattern: "registration rate"
+  pos <- which(str_detect(lower_text, "registration rate"))
+       
+  # drop the first page (unlikely to have the registration change graph)
+  tp <- pos[! pos %in% c(1)]
+  
+  # turn list into character vector
+  raw_text <- lower_text[[tp]] %>%
+    str_split("\n") %>%
+    unlist()
+  
+  # find the start and last line (element) of the plot
+  first <- which(str_detect(raw_text, "   100"))
+  last <- which(str_detect(raw_text, "   0"))
+  
+  # years
+  years <- raw_text[(last+1):(last+2)] %>% 
+    str_split(" ") %>%
+    unlist() %>%
+    stri_remove_empty() %>%
+    unique() %>%
+    as.numeric()
+  
+  years <- years[order(years)]
+  
+  # isolate the estimates 
+  table <- raw_text[first:last]
+  table <- table[str_detect(table, "%")]
+  
+  # remove the axis 
+  axis <- seq(from = 10, to = 100, by = 10)
+  axis <- paste(axis, collapse = "  |  ")
+  
+  table <- str_replace_all(table, axis, "")
+  
+  scores <- table %>%
+    str_trim() %>%
+    str_split(" ") %>%
+    unlist() %>%
+    stri_remove_empty() %>%
+    parse_number()
+  
+  type <- rep(seq(length(scores)/length(years)), each = length(years))
+  
+  if (length(years) < length(scores)) {
+    
+    new_years <- rep(years, (length(scores) * length(years))/length(years))
+  
+    new_scores <- rep(scores, each = (length(years) * length(scores))/length(scores))      
+    
+    final_df <- data.frame(year = new_years,
+                           score = new_scores,
+                           type =     rep(unique(seq(scores)), each = length(new_scores)/length(scores))) %>%
+          mutate(type = case_when(type == 1 ~ "registration_rate",
+                              type == 2 ~ "voting_rate_of_registered_students",
+                              type == 3 ~ "voting_rate")) 
+        
+    final_df$score[!duplicated(final_df$score)] <- NA
+         
+    final_df <- final_df %>%
+      select(year, score, type)
+  } else {
+
+  # Warning: I made a very strong assumption that all scores increase over years.
+  final_df <- data.frame(score = scores, 
+             type = type) %>%
+    group_by(type) %>%
+    arrange(scores) %>%
+    ungroup() %>%
+    mutate(year = rep(years, length(scores)/length(years))) %>%
+    mutate(type = case_when(type == 1 ~ "registration_rate",
+                            type == 2 ~ "voting_rate_of_registered_students",
+                            type == 3 ~ "voting_rate"))
+
+  }
+  
+  # add the file source
+  final_df <- final_df %>%
+    mutate(source = target)
+
+  return(final_df)
 }
 ```
 
@@ -104,18 +221,7 @@ parse_text <- function(target) {
 
 ```{r}
 # Map file lists to parse text 
-parsed_df <- map_dfr(file_lists, parse_text)
-
-# Identify and filter failed PDF parsed results 
-test_text <- function(i) {
-  
-  out <- substr(parsed_df$text[i], start = 1 , stop = 20)
-  
-  return(out)
-  
-  }
-
-parsed_text <- purrr::map_chr(seq(parsed_df$text), test_text)
+parsed_df <- map_dfr(target[3], parse_report)
 
 length(parsed_text) # 1,230
 
