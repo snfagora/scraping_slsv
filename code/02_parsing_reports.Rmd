@@ -123,6 +123,8 @@ final_df <- data.frame(score = scores,
 ```{r}
 parse_report <- function(target) {
 
+  print(target)
+  
   # file path
   ## tested: target[1], target[2], target[5]
   target_text <- here("outputs", target)
@@ -221,18 +223,22 @@ parse_report <- function(target) {
 
 ```{r}
 # Map file lists to parse text 
-parsed_df <- map_dfr(target[3], parse_report)
+parsed_df <- map(target, safely(parse_report))
 
-length(parsed_text) # 1,230
+filtered_df <- parsed_df %>%
+  map("result") %>%
+  compact() %>%
+  reduce(bind_rows)
 
-log_filters <- !(str_count(parsed_text) %in% c(1,0))
+head(filtered_df)
 
-filtered_df <- parsed_df[log_filters,] # 1,226
+# 717 scraped 
+# 569 remained
+# 1286 - filtered_df$source %>% unique() %>% length()
 ```
 
 # Export the file
 
 ```{r}
-write_csv(filtered_df, here("outputs", "filtered_df.csv"))
-#write_rds(filtered_df, here("outputs", "filtered_df.rds"))
+write_csv(filtered_df, here("outputs", "report_df.csv"))
 ```
