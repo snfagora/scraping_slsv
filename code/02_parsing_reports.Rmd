@@ -21,11 +21,11 @@ source(here("functions", "utils.R"))
 # Load data 
 
 ```{r}
-file_lists <- list.files(here("outputs"))
+file_lists <- list.files(here("outputs", "nslve"))
 
 target <- file_lists[str_detect(tolower(file_lists), "nslve") & !str_detect(tolower(file_lists), "json")]
 
-sum(str_detect(tolower(file_lists), "nslve")) - 2 # 1,286 NSLVE reports (1,288 - 2)
+target %>% length() # 1,286
 ```
 
 # Parse report
@@ -35,7 +35,9 @@ sum(str_detect(tolower(file_lists), "nslve")) - 2 # 1,286 NSLVE reports (1,288 -
 ```{r}
 # file path
 ## tested: target[1], target[2], target[5]
-target_text <- here("outputs", target[2])
+#target_text <- here("outputs", "nslve", "2018-NSLVE-Report-Kapiolani-Community-College.pdf")
+
+target_text <- here("outputs", "nslve", target[5])
 
 # extract text (a list object)
 text <- pdftools::pdf_text(target_text)
@@ -44,7 +46,7 @@ text <- pdftools::pdf_text(target_text)
 lower_text <- map(text, tolower)
 
 # find the page that contains the target pattern: "registration rate"
-pos <- which(str_detect(lower_text, "registration rate"))
+pos <- which(str_detect(lower_text, "total student enrollment"))
      
 # drop the first page (unlikely to have the registration change graph)
 tp <- pos[! pos %in% c(1)]
@@ -55,67 +57,49 @@ raw_text <- lower_text[[tp]] %>%
   unlist()
 
 # find the start and last line (element) of the plot
-first <- which(str_detect(raw_text, "   100"))
-last <- which(str_detect(raw_text, "   0"))
+first <- which(str_detect(raw_text, "   total student enrollment"))
+last <- which(str_detect(raw_text, "   difference from all institutions"))
 
 # years
-years <- raw_text[(last+1):(last+2)] %>% 
+years <- raw_text[(first-2):(first-1)] %>% 
   str_split(" ") %>%
   unlist() %>%
   stri_remove_empty() %>%
   unique() %>%
-  as.numeric()
+  as.numeric() %>%
+  na.omit() # in case, there's a NA value
 
 years <- years[order(years)]
 
-# isolate the estimates 
+# isolate the table frame 
 table <- raw_text[first:last]
-table <- table[str_detect(table, "%")]
 
-# remove the axis 
-axis <- seq(from = 10, to = 100, by = 10)
-axis <- paste(axis, collapse = "  |  ")
-
-table <- str_replace_all(table, axis, "")
-
-scores <- table %>%
-  str_trim() %>%
-  str_split(" ") %>%
-  unlist() %>%
+# turn the character vector into a dataframe
+table_df <- table %>%
+  str_trim(side = "left") %>%
   stri_remove_empty() %>%
-  parse_number()
+  str_split_fixed(" {5,}", 4) %>%
+  as_tibble()
 
-type <- rep(seq(length(scores)/length(years)), each = length(years))
+# name columns
+col_names <- c("names", years, "change")
 
-if (length(years) < length(scores)) {
+colnames(table_df) <- col_names
+
+# cleanup the dataframe
+replace_weird_na <- function(x){
   
-  new_years <- rep(years, (length(scores) * length(years))/length(years))
-
-  new_scores <- rep(scores, each = (length(years) * length(scores))/length(scores))      
-  
-  final_df <- data.frame(year = new_years,
-                         score = new_scores,
-                         type =     rep(unique(seq(scores)), each = length(new_scores)/length(scores))) %>%
-        mutate(type = case_when(type == 1 ~ "registration_rate",
-                            type == 2 ~ "voting_rate_of_registered_students",
-                            type == 3 ~ "voting_rate")) 
-      
-  final_df$score[!duplicated(final_df$score)] <- NA
-       
-  final_df <- final_df %>%
-    select(year, score, type)
+  x[x == "n/a"] <- NA
+ 
+  return(x) 
 }
 
-# Warning: I made a very strong assumption that all scores increase over years.
-final_df <- data.frame(score = scores, 
-           type = type) %>%
-  group_by(type) %>%
-  arrange(scores) %>%
-  ungroup() %>%
-  mutate(year = rep(years, length(scores)/length(years))) %>%
-  mutate(type = case_when(type == 1 ~ "registration_rate",
-                          type == 2 ~ "voting_rate_of_registered_students",
-                          type == 3 ~ "voting_rate"))
+final_df <- table_df %>%
+  mutate(across(everything(), na_if, "n/a")) %>%
+  mutate(across(everything(), na_if, "")) %>%
+  mutate(across(-names, parse_number))
+
+final_df
 ```
 
 ## Function 
@@ -123,11 +107,11 @@ final_df <- data.frame(score = scores,
 ```{r}
 parse_report <- function(target) {
 
-  print(target)
+  message(paste("Started parsing: ", target))
   
   # file path
   ## tested: target[1], target[2], target[5]
-  target_text <- here("outputs", target)
+  target_text <- here("outputs", "nslve", target)
   
   # extract text (a list object)
   text <- pdftools::pdf_text(target_text)
@@ -136,7 +120,7 @@ parse_report <- function(target) {
   lower_text <- map(text, tolower)
   
   # find the page that contains the target pattern: "registration rate"
-  pos <- which(str_detect(lower_text, "registration rate"))
+  pos <- which(str_detect(lower_text, "total student enrollment"))
        
   # drop the first page (unlikely to have the registration change graph)
   tp <- pos[! pos %in% c(1)]
@@ -147,79 +131,64 @@ parse_report <- function(target) {
     unlist()
   
   # find the start and last line (element) of the plot
-  first <- which(str_detect(raw_text, "   100"))
-  last <- which(str_detect(raw_text, "   0"))
+  first <- which(str_detect(raw_text, "   total student enrollment"))
+  last <- which(str_detect(raw_text, "   difference from all institutions"))
   
   # years
-  years <- raw_text[(last+1):(last+2)] %>% 
+  years <- raw_text[(first-2):(first-1)] %>% 
     str_split(" ") %>%
     unlist() %>%
     stri_remove_empty() %>%
     unique() %>%
-    as.numeric()
+    as.numeric() %>%
+    na.omit() # in case, there's a NA value
   
   years <- years[order(years)]
   
-  # isolate the estimates 
+  # isolate the table frame 
   table <- raw_text[first:last]
-  table <- table[str_detect(table, "%")]
   
-  # remove the axis 
-  axis <- seq(from = 10, to = 100, by = 10)
-  axis <- paste(axis, collapse = "  |  ")
-  
-  table <- str_replace_all(table, axis, "")
-  
-  scores <- table %>%
-    str_trim() %>%
-    str_split(" ") %>%
-    unlist() %>%
+  # turn the character vector into a dataframe
+  table_df <- table %>%
+    str_trim(side = "left") %>%
     stri_remove_empty() %>%
-    parse_number()
+    str_split_fixed(" {5,}", 4) %>%
+    as_tibble()
   
-  type <- rep(seq(length(scores)/length(years)), each = length(years))
+  # name columns
+  col_names <- c("names", years, "change")
   
-  if (length(years) < length(scores)) {
+  colnames(table_df) <- col_names
+  
+  # cleanup the dataframe
+  replace_weird_na <- function(x){
     
-    new_years <- rep(years, (length(scores) * length(years))/length(years))
-  
-    new_scores <- rep(scores, each = (length(years) * length(scores))/length(scores))      
-    
-    final_df <- data.frame(year = new_years,
-                           score = new_scores,
-                           type =     rep(unique(seq(scores)), each = length(new_scores)/length(scores))) %>%
-          mutate(type = case_when(type == 1 ~ "registration_rate",
-                              type == 2 ~ "voting_rate_of_registered_students",
-                              type == 3 ~ "voting_rate")) 
-        
-    final_df$score[!duplicated(final_df$score)] <- NA
-         
-    final_df <- final_df %>%
-      select(year, score, type)
-  } else {
-
-  # Warning: I made a very strong assumption that all scores increase over years.
-  final_df <- data.frame(score = scores, 
-             type = type) %>%
-    group_by(type) %>%
-    arrange(scores) %>%
-    ungroup() %>%
-    mutate(year = rep(years, length(scores)/length(years))) %>%
-    mutate(type = case_when(type == 1 ~ "registration_rate",
-                            type == 2 ~ "voting_rate_of_registered_students",
-                            type == 3 ~ "voting_rate"))
-
+    x[x == "n/a"] <- NA
+   
+    return(x) 
   }
+  
+  final_df <- table_df %>%
+    mutate(across(everything(), na_if, "n/a")) %>%
+    mutate(across(everything(), na_if, "")) %>%
+    mutate(across(-names, parse_number))
   
   # add the file source
   final_df <- final_df %>%
     mutate(source = target)
 
+  message(paste("Completed parsing: ", target))
+    
   return(final_df)
 }
 ```
 
 ## Map 
+
+```{r}
+# test
+walk(1:300, ~parse_report(target[.]))
+```
 
 ```{r}
 # Map file lists to parse text 
@@ -232,9 +201,12 @@ filtered_df <- parsed_df %>%
 
 head(filtered_df)
 
-# 717 scraped 
-# 569 remained
+filtered_df$source %>% unique() %>% length()
+# 727 scraped 
+# 559 remained
 # 1286 - filtered_df$source %>% unique() %>% length()
+
+filtered_df
 ```
 
 # Export the file
