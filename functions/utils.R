@@ -1,3 +1,37 @@
+extract_years <- function(year_input) {
+  
+  # test
+  #year_input <- file_lists[30]
+  
+  # target
+  target_nums <- c(2000:2022)
+  
+  # wrangling
+  out <- year_input %>%  
+    str_replace_all("[[:punct:]]", " ") %>%
+    str_replace_all("[[:alpha:]]", " ") %>%
+    str_split(" +") %>%
+    pluck(1) %>%
+    stri_remove_empty() %>%
+    parse_number()
+  
+  out <- out[out %in% target_nums]
+  
+  if (length(out) > 2) {
+    
+    out <- c(out[1], out[2])
+    
+  } 
+  
+  out <- data.frame(
+    "begin" = out[1],
+    "end" = out[2],
+    "source" = year_input)
+  
+  return(out)
+  
+}
+
 extract_url <- function(url) {
 
   pg <- read_html(url)

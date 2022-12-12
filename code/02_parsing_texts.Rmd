@@ -9,7 +9,7 @@ output: html_document
 
 ```{r}
 if(!require(pacman)) install.packages("pacman")
-pacman::p_load(tesseract, magick, zoo, parallel, pdftools, naniar, tidyverse, here, glue, purrr, stringr)
+pacman::p_load(tesseract, magick, zoo, parallel, pdftools, naniar, tidyverse, here, glue, purrr, stringr, lubridate)
 
 source(here("functions", "utils.R"))
 ```
@@ -22,6 +22,23 @@ length(file_lists) # 1,231
 
 file_lists <- file_lists[str_detect(file_lists, ".pdf")]
 length(file_lists) # 1,230 (removed one file)
+
+year_outs <- map_dfr(file_lists, extract_years)
+
+year_outs %>%
+  pivot_longer(c("begin", "end"),
+               names_to = "time",
+               values_to = "year") %>%
+  group_by(year) %>%
+  count() %>%
+  ggplot(aes(x = ymd(sprintf("%d-01-01", year)), y = n)) +
+    geom_line() +
+    labs(x = "Year",
+         y = "Count",
+         title = "The years covered by Action Plans",
+         subtitle = glue("The number of reports: {scales::label_comma(, accuracy = 1)(length(file_lists))}"))
+
+ggsave(here("figures", "action_plan.png"))
 ```
 
 # Parse text 

@@ -11,9 +11,10 @@ output: html_document
 #remotes::install_github(c("ropensci/tabulizerjars", "ropensci/tabulizer"))
 #devtools::install_github("hegghammer/daiR")
 #devtools::install_github("daniel1noble/metaDigitise")
+#pacman::p_load_gh("trinker/textreadr")
 
 if(!require(pacman)) install.packages("pacman")
-pacman::p_load(tesseract, magick, zoo, parallel, pdftools, naniar, tidyverse, here, glue, purrr, stringr, stringi, tabulizer, daiR, metaDigitise)
+pacman::p_load(tesseract, magick, zoo, parallel, pdftools, naniar, tidyverse, here, glue, purrr, stringr, stringi, tabulizer, daiR, metaDigitise, textreadr, lubridate)
 
 source(here("functions", "utils.R"))
 ```
@@ -26,6 +27,25 @@ file_lists <- list.files(here("outputs", "nslve"))
 target <- file_lists[str_detect(tolower(file_lists), "nslve") & !str_detect(tolower(file_lists), "json")]
 
 target %>% length() # 1,286
+```
+
+```{r}
+year_outs <- map_dfr(file_lists, extract_years)
+
+year_outs %>%
+  pivot_longer(c("begin", "end"),
+               names_to = "time",
+               values_to = "year") %>%
+  group_by(year) %>%
+  count() %>%
+  ggplot(aes(x = ymd(sprintf("%d-01-01", year)), y = n)) +
+    geom_line() +
+    labs(x = "Year",
+         y = "Count",
+         title = "The years covered by NSLVE reports",
+         subtitle = glue("The number of reports: {scales::label_comma(, accuracy = 1)(length(file_lists))}"))
+
+ggsave(here("figures", "nslve_plan.png"))
 ```
 
 # Parse report
@@ -187,7 +207,7 @@ parse_report <- function(target) {
 
 ```{r}
 # test
-walk(1:300, ~parse_report(target[.]))
+# walk(1:300, ~parse_report(target[.]))
 ```
 
 ```{r}
