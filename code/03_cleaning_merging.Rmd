@@ -1,0 +1,172 @@
+---
+title: "Cleaning and Merging"
+author: "Jae Yeon Kim"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Install pkgs 
+
+```{r}
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, here, glue, purrr, stringr, 
+               xlsx, # import xlsx file  
+               tm, # text processing
+               stringdist, # fuzzy matching
+               fuzzyjoin,
+               fedmatch)
+
+source(here("functions", "utils.R"))
+```
+
+# Load data 
+
+```{r}
+# ap = action plans
+ap <- read_csv(here("outputs", "filtered_df.csv"))
+
+paste("The number of action plans:", nrow(ap))
+
+meta <- read.xlsx(here("raw_data", list.files(here("raw_data"))), sheetIndex = 1)
+```
+
+# Wrangle data 
+
+## Action plans 
+
+```{r}
+# clean text
+stopwords_removal <- stopwords("en")  # Specify the language for stopwords (e.g., "en" for English)
+
+ap$text <- tm::removeWords(ap$text, words = stopwords_removal)
+```
+
+```{r}
+ap <- ap %>%
+  mutate(name = tolower(name)) %>%
+  mutate(name = str_replace_all(name, "-|action|plan", " "),
+         name = str_replace_all(name, ".pdf", ""),
+         name = str_replace_all(name, "\\d+", ""), 
+         name = str_replace_all(name, "final", ""),
+         name = str_replace_all(name, "may|june|docx|updated|dec|april|vfc|draft|update|revised|revise|jan|july|aug|mar", ""),
+         name = str_replace_all(name, "[:punct:]", ""),
+         name = str_replace_all(name, "all in challenge|spring", ""),
+         name = trimws(name)) %>%
+  select(name, text) 
+
+ap$name
+```
+
+## Score cards 
+
+```{r}
+sc <- data.frame(name = tolower(meta[2:nrow(meta),1]))
+
+sc <- sc %>%
+         mutate(name = str_replace_all(name, "[:punct:]", ""),
+                name = trimws(name)) 
+
+test_matching <- function(method_name) {
+
+  matched <- stringdist_join(
+    sc, 
+    ap,
+    by = c("name" = "name"),
+    method = method_name,
+    max_dist = 2,
+    distance_col = "distance"
+  ) 
+
+  dist <- nrow(sc) -
+  matched$name.x %>% unique() %>% length()
+  
+  out <- data.frame(method = method_name, dist = dist)
+  
+  return(out)
+
+}
+
+test_out <- map_dfr(c("osa", "lv", "dl", "hamming", "lcs", "qgram", "cosine", "jaccard", "jw",
+    "soundex"), test_matching) %>%
+  arrange(dist)
+
+test_out
+```
+
+```{R}
+ac_high <- meta[2:nrow(meta),c(3:5)] %>%
+  mutate(accountability = "high") 
+ac_low <- meta[2:nrow(meta),c(6:8)] %>%
+  mutate(accountability = "low")
+
+l_high <- meta[2:nrow(meta),c(9:11)] %>%
+  mutate(learning = "high")
+l_low <- meta[2:nrow(meta),c(12:14)] %>%
+  mutate(learning = "low")
+
+sc_high <- meta[2:nrow(meta),c(15:17)] %>%
+  mutate(strategic_capacity = "high")
+sc_low <- meta[2:nrow(meta),c(17:19)] %>%
+  mutate(strategic_capacity = "low")
+```
+
+```{r}
+bind_2df <- function(df1, df2) {
+
+  names(df1)[1:3] <- c("cvp", "slsv", "all_in")
+  names(df2)[1:3] <- c("cvp", "slsv", "all_in")
+  
+  df1 <- df1 %>%
+    rownames_to_column("id")
+  df2 <- df2 %>%
+    rownames_to_column("id")
+  
+  binded <- bind_rows(df1, df2)
+
+  binded[is.na(binded)] <- 0
+  
+  out <- binded %>%
+    pivot_longer(last_col(),
+               names_to = "type",
+               values_to = "score") %>%
+    mutate(name = rep(sc$name, 2)) %>%
+    select(name, everything()) 
+  
+  return(out)
+}
+```
+
+```{r}
+sc_binded <- bind_rows(bind_2df(ac_high, ac_low),
+  bind_2df(l_high, l_low)) %>%
+  bind_rows(bind_2df(sc_high, sc_low))
+
+write_csv(sc_binded, here("processed_data", "sc_binded.csv"))
+```
+
+# Join the action plans and the score cards
+
+```{r}
+ap <- ap %>%
+  rownames_to_column("id")
+```
+
+```{r}
+matched <- stringdist_join(
+    sc_binded %>% select(-id), 
+    ap %>% select(-id),
+    by = c("name" = "name"),
+    method = "osa",
+    max_dist = 2,
+    distance_col = "distance"
+  )
+```
+
+```{r}
+# 71% matched based one scraping data 
+1 - (setdiff(sc$name, matched$name.x) %>% length())/nrow(sc)
+```
+
+```{r}
+write_csv(matched, here("processed_data", "matched.csv"))
+```
