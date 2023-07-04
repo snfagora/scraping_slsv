@@ -167,6 +167,21 @@ matched <- stringdist_join(
 1 - (setdiff(sc$name, matched$name.x) %>% length())/nrow(sc)
 ```
 
+# Summarize the meta data 
+
+```{r}
+matched <- matched %>%
+  mutate(cvp = as.numeric(cvp),
+         slsv = as.numeric(slsv),
+         all_in = as.numeric(all_in)) %>%
+  mutate(index = (cvp + slsv + all_in)/3) %>%
+  distinct() %>%
+  select(name.x, name.y, everything())
+
+matched <- matched %>%
+  filter(index > 0)
+```
+
 ```{r}
 write_csv(matched, here("processed_data", "matched.csv"))
 ```
