@@ -53,8 +53,6 @@ ap <- ap %>%
          name = str_replace_all(name, "all in challenge|spring", ""),
          name = trimws(name)) %>%
   select(name, text) 
-
-ap$name
 ```
 
 ## Score cards 
@@ -152,7 +150,39 @@ ap <- ap %>%
 ```
 
 ```{r}
-matched <- stringdist_join(
+sc_binded <- sc_binded %>%
+  mutate(cvp = as.numeric(cvp),
+         slsv = as.numeric(slsv),
+         all_in = as.numeric(all_in)) %>%
+  mutate(index = (cvp + slsv + all_in)/3) 
+
+sc_binded <- sc_binded %>%
+  mutate(numeric_score = case_when(
+    score == "high" & index > 0 ~ 1, 
+    score == "low" & index > 0 ~ 0.5,
+    .default = 0
+  )) 
+
+sc_binded %>%
+  group_by(type, numeric_score) %>%
+  count()
+```
+
+```{r}
+sc_wide <- sc_binded %>%
+  pivot_wider(names_from = type, 
+              values_from = numeric_score, 
+              values_fill = 0)
+
+sc_wide %>%
+  select(accountability, learning, strategic_capacity) %>%
+  cor() %>%
+  corrplot::corrplot(type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+```
+
+```{r}
+matched <- stringdist_left_join(
     sc_binded %>% select(-id), 
     ap %>% select(-id),
     by = c("name" = "name"),
@@ -160,11 +190,6 @@ matched <- stringdist_join(
     max_dist = 2,
     distance_col = "distance"
   )
-```
-
-```{r}
-# 71% matched based one scraping data 
-1 - (setdiff(sc$name, matched$name.x) %>% length())/nrow(sc)
 ```
 
 # Summarize the meta data 
@@ -177,11 +202,27 @@ matched <- matched %>%
   mutate(index = (cvp + slsv + all_in)/3) %>%
   distinct() %>%
   select(name.x, name.y, everything())
+```
 
-matched <- matched %>%
+```{r}
+matched_copy <- matched %>%
   filter(index > 0)
 ```
 
 ```{r}
-write_csv(matched, here("processed_data", "matched.csv"))
+write_csv(matched_copy, here("processed_data", "matched.csv"))
+```
+
+```{r}
+text4class <- ap %>% left_join(matched %>% select(-c("name.x")), by = c("name" = "name.y",
+                                 "text" = "text"))
+
+text4class <- text4class %>%
+  mutate(relevant = ifelse(numeric_score > 0, 1, 0)) %>%
+  select(name, text, type, relevant) %>%
+  distinct()
+```
+
+```{r}
+write_csv(text4class, here("processed_data", "text4class.csv"))
 ```
