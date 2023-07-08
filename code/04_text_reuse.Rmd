@@ -18,8 +18,10 @@ source(here("functions", "utils.R"))
 
 ```{r}
 df <- read_csv(here("processed_data", "matched.csv"))
+```
 
-df$distance <- NULL
+```{r}
+mean(df$distance == 0, na.rm = T)
 ```
 
 # Text reuse
@@ -107,7 +109,7 @@ df %>%
              ymin = mean - 1.96*se)) +
   geom_pointrange() +
   scale_y_continuous(label = scales::percent) +
-  labs(x = "", y = "High similar comparisons %") +
+  labs(x = "", y = "Low similar comparisons %") +
   ggthemes::theme_economist() 
 
 ggsave(here("figures", "text_reuse.png"))

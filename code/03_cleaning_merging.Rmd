@@ -261,9 +261,13 @@ matched <- stringdist_left_join(
     ap %>% select(-id),
     by = c("name" = "name"),
     method = "osa",
-    max_dist = 2,
+    max_dist = 1,
     distance_col = "distance"
   )
+
+matched %>%
+  filter(distance != 0) %>%
+  select(name.x, name.y, distance, high_sc)
 ```
 
 # Summarize the meta data 
