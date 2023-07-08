@@ -1,0 +1,184 @@
+---
+title: "Parsing texts"
+author: "Jae Yeon Kim"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Install pkgs 
+
+```{r}
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, here, quanteda, readtext, keyATM)
+
+source(here("functions", "utils.R"))
+```
+
+# Load data 
+
+```{r}
+df <- read_csv(here("processed_data", "matched.csv"))
+
+df$distance <- NULL
+
+df <- df %>%
+  filter(!is.na(text))
+```
+
+# Prep data
+
+Reference: https://keyatm.github.io/keyATM/articles/pkgdown_files/Preparation.html
+
+```{r}
+# Preprocessing with quanteda and create a dfm object
+key_corpus <- corpus(df, text_field = "text")
+
+# If you use the covariate model, please consider using `docvars` argument
+key_corpus <- corpus(df, text_field = "text", docvars = 'high_sc')
+
+# You can conduct a variety of preprocessing in this step as shown in the next section
+key_token <- tokens(key_corpus)
+
+# Create a document-feature matrix (a dfm object) from a token object
+key_dfm <- dfm(key_token)
+```
+
+```{r}
+data_tokens <- tokens(
+    key_corpus,
+    remove_numbers = TRUE,
+    remove_punct = TRUE,
+    remove_symbols = TRUE,
+    remove_separators = TRUE,
+    remove_url = TRUE
+  ) %>%
+  tokens_tolower() %>%
+  tokens_remove(
+    c(stopwords("english"),
+      "may", "shall", "can",
+      "must", "upon", "with", "without"
+    )
+  ) %>%
+  tokens_select(min_nchar = 3)
+
+data_dfm <- dfm(data_tokens) %>%
+              dfm_trim(min_termfreq = 5, min_docfreq = 2)
+
+ncol(data_dfm) # 7,021 
+```
+
+```{r}
+keyATM_docs <- keyATM_read(texts = data_dfm)
+
+summary(keyATM_docs)
+```
+
+# Keywords 
+
+```{r}
+df %>%
+  group_by(high_sc) %>%
+  slice_sample(n = 5) %>%
+  select(high_sc, text)
+```
+
+```{r}
+set.seed(225)  # set the seed before split the dfm
+docs_withSplit <- keyATM_read(texts = data_dfm,
+                              split = 0.3)  # split each document
+
+out <- weightedLDA(
+  docs              = docs_withSplit$W_split,  # 30% of the corpus
+  number_of_topics  = 5,  # the number of potential themes in the corpus
+  model             = "base",
+  options           = list(seed = 250)
+)
+```
+
+```{r}
+top_words(out)  # top words can aid selecting keywords
+```
+
+```{r}
+out <- keyATM(
+  docs              = docs_withSplit,  # 70% of the corpus
+  no_keyword_topics = 10,               # number of topics without keywords
+  keywords          = keywords,        # selected keywords
+  model             = "base",          # select the model
+  options           = list(seed = 250)
+)
+```
+
+```{r}
+keywords <- list(
+  learning = c("learning", "education", "learn"), 
+  governanec = c("democratic", "committee", "governance"),
+  accountability = c("accountable", "accountability", "responsible", "responsibility"),
+  network = c("faculty", "staff", "stakeholder", "network"),
+  diversity = c("diversity", "diverse", "black", "brown", "white", "asian", "inclusion"),
+  data = c("data", "analysis", "analytic"),
+  adaptation = c("threat", "threats", "opportunity", "opportunities", "adapt"),
+  flexibility = c("flexible", "agile", "change", "changes", "changing")
+)
+
+n_kw <- length(keywords)
+
+key_viz <- visualize_keywords(docs = keyATM_docs, keywords = keywords)
+
+save_fig(key_viz, here("figures", "keyword.png"), width = 6.5, height = 4)
+```
+
+# Covariate topic modeling
+
+```{r}
+vars <- docvars(key_corpus)
+
+vars_selected <- vars %>%
+  mutate(high_sc_fac = factor(ifelse(high_sc == 1, "High strategic capacity", "Not"))) %>%
+  select(high_sc_fac)
+
+vars_selected
+```
+
+```{r}
+out <- keyATM(
+  docs              = keyATM_docs,
+  no_keyword_topics = n_kw,
+  keywords          = keywords,
+  model             = "covariates",
+  model_settings    = list(covariates_data = vars_selected,
+                           covariates_formula = ~ high_sc_fac),
+  options           = list(seed = 250)
+)
+
+used_covariates <- covariates_get(out)
+head(used_covariates)
+
+used_covariates
+
+strata_topic <- by_strata_DocTopic(
+  out, by_var = "high_sc_facNot",
+  labels = c("Not", "High strategy")
+)
+
+df_topic <- bind_rows(
+  strata_topic$tables$`High strategy`[1:8,],
+  strata_topic$tables$`Not`[1:8,]
+  )
+
+df_topic <- df_topic %>%
+  mutate(Topic = substring(Topic, 3))
+
+df_topic %>%
+  ggplot(aes(x = fct_reorder(toupper(Topic), Point), 
+             y = Point, ymin = Lower, ymax = Upper, col = label)) +
+  geom_pointrange() +
+  coord_flip() +
+  labs(col = "Group",
+       x = "",
+       y = "Likelihood") +
+  scale_y_continuous(label = scales::percent) +
+  ggthemes::theme_economist()
+
+ggsave(here("figures", "covariate_topic.png"))
+```

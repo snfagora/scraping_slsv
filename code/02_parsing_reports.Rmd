@@ -43,7 +43,8 @@ year_outs %>%
     labs(x = "Year",
          y = "Count",
          title = "The years covered by NSLVE reports",
-         subtitle = glue("The number of reports: {scales::label_comma(, accuracy = 1)(length(file_lists))}"))
+         subtitle = glue("The number of reports: {scales::label_comma(, accuracy = 1)(length(file_lists))}")) +
+  theme_minimal()
 
 ggsave(here("figures", "nslve_plan.png"))
 ```

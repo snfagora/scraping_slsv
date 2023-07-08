@@ -14,7 +14,13 @@ pacman::p_load(tidyverse, here, glue, purrr, stringr,
                tm, # text processing
                stringdist, # fuzzy matching
                fuzzyjoin,
-               fedmatch)
+               fedmatch,
+               corrr, 
+               scales,
+               patchwork,
+               boot, 
+               purrr
+               )
 
 source(here("functions", "utils.R"))
 ```
@@ -32,29 +38,6 @@ meta <- read.xlsx(here("raw_data", list.files(here("raw_data"))), sheetIndex = 1
 
 # Wrangle data 
 
-## Action plans 
-
-```{r}
-# clean text
-stopwords_removal <- stopwords("en")  # Specify the language for stopwords (e.g., "en" for English)
-
-ap$text <- tm::removeWords(ap$text, words = stopwords_removal)
-```
-
-```{r}
-ap <- ap %>%
-  mutate(name = tolower(name)) %>%
-  mutate(name = str_replace_all(name, "-|action|plan", " "),
-         name = str_replace_all(name, ".pdf", ""),
-         name = str_replace_all(name, "\\d+", ""), 
-         name = str_replace_all(name, "final", ""),
-         name = str_replace_all(name, "may|june|docx|updated|dec|april|vfc|draft|update|revised|revise|jan|july|aug|mar", ""),
-         name = str_replace_all(name, "[:punct:]", ""),
-         name = str_replace_all(name, "all in challenge|spring", ""),
-         name = trimws(name)) %>%
-  select(name, text) 
-```
-
 ## Score cards 
 
 ```{r}
@@ -63,7 +46,9 @@ sc <- data.frame(name = tolower(meta[2:nrow(meta),1]))
 sc <- sc %>%
          mutate(name = str_replace_all(name, "[:punct:]", ""),
                 name = trimws(name)) 
+```
 
+```{r}
 test_matching <- function(method_name) {
 
   matched <- stringdist_join(
@@ -142,6 +127,116 @@ sc_binded <- bind_rows(bind_2df(ac_high, ac_low),
 write_csv(sc_binded, here("processed_data", "sc_binded.csv"))
 ```
 
+```{r}
+sc_binded <- sc_binded %>%
+    mutate(
+      cvp = as.numeric(cvp),
+      slsv = as.numeric(slsv),
+      all_in = as.numeric(all_in)
+      )
+
+sc_binded <- sc_binded %>% 
+  mutate(slsv = replace_na(slsv, 0))
+```
+
+```{r}
+sc_binded %>%
+  mutate(type = recode(type,
+      accountability = "Accountability",
+      learning = "Learning",
+      strategic_capacity = "Strategic capacity"
+                       )) %>%
+  pivot_longer(cols = c("cvp","slsv","all_in"),
+               names_to = "coder",
+               values_to = "label") %>%
+  mutate(coder = recode(coder, 
+      cvp = "Campus Vote Project",
+      slsv = "SLSV Coalition",
+      all_in = "ALL IN Campus Democracy Challenge")) %>%
+  mutate(score = recode(score,
+      high = "High",
+      low = "Low")) %>%
+  group_by(type, score, coder) %>%
+  summarize(avg_labeled = mean(label)) %>%
+  ggplot(aes(x = coder, y = avg_labeled, fill = score)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = paste0(round(avg_labeled, 2)*100,"%")), position = position_dodge(width = .9)) +
+  facet_wrap(~type) +
+  coord_flip() +
+  labs(x = "",
+       y = "% labeled", 
+       fill = "Score") +
+  scale_y_continuous(label = scales::percent) +
+  ggthemes::theme_economist()
+
+ggsave(here("figures", "coder_label_dist.png"),
+       height = 8,
+       width = 9)
+```
+
+```{r}
+sc_binded[,c(3:5)][is.na(sc_binded[,c(3:5)])] <- 0
+
+plot_cor <- function(score_label, type_label) {
+  
+  out <- sc_binded %>%
+    filter(score == score_label) %>%
+    filter(type == type_label) %>%
+    select(cvp, slsv, all_in) %>%
+    correlate() %>% 
+    rearrange() %>%
+    autoplot() +
+    geom_text(aes(label = round(r, digits = 2)), size = 4) +
+    theme_bw(16) +
+    labs(title = glue("{score_label} {type_label}"))
+  
+  return(out)
+  
+}
+
+vars <- expand.grid(c("high", "low"), c("accountability", "learning", "strategic_capacity"))
+
+var1 <- vars[,1]
+var2 <- vars[,2]
+
+glue("plot_cor('{var1}', '{var2}')")
+
+#plot_cor('low', 'accountability')
+#plot_cor('low', 'learning')
+
+plot_cor('high', 'accountability') +
+plot_cor('high', 'learning') +
+plot_cor('high', 'strategic_capacity') +
+plot_cor('low', 'strategic_capacity')
+
+ggsave(here("figures", "corr_type.png"),
+       height = 10,
+       width = 10)
+```
+
+## Action plans 
+
+```{r}
+# clean text
+stopwords_removal <- stopwords("en")  # Specify the language for stopwords (e.g., "en" for English)
+
+ap$text <- tm::removeWords(ap$text, words = stopwords_removal)
+```
+
+```{r}
+ap <- ap %>%
+  mutate(name = tolower(name)) %>%
+  mutate(name = str_replace_all(name, "-|action|plan", " "),
+         name = str_replace_all(name, ".pdf", ""),
+         name = str_replace_all(name, "\\d+", ""), 
+         name = str_replace_all(name, "final", ""),
+         name = str_replace_all(name, "may|june|docx|updated|dec|april|vfc|draft|update|revised|revise|jan|july|aug|mar", ""),
+         name = str_replace_all(name, "[:punct:]", ""),
+         name = str_replace_all(name, "all in challenge|spring", ""),
+         name = trimws(name)) %>%
+  select(name, text) 
+```
+
 # Join the action plans and the score cards
 
 ```{r}
@@ -150,40 +245,19 @@ ap <- ap %>%
 ```
 
 ```{r}
-sc_binded <- sc_binded %>%
-  mutate(cvp = as.numeric(cvp),
-         slsv = as.numeric(slsv),
-         all_in = as.numeric(all_in)) %>%
-  mutate(index = (cvp + slsv + all_in)/3) 
+sc_high_df <- sc_binded %>%
+  filter(score == "high" & type == "strategic_capacity")
 
-sc_binded <- sc_binded %>%
-  mutate(numeric_score = case_when(
-    score == "high" & index > 0 ~ 1, 
-    score == "low" & index > 0 ~ 0.5,
-    .default = 0
-  )) 
+sc_high_df <- sc_high_df %>%
+  mutate(high_sc = ifelse(cvp == 1 | slsv == 1 | all_in == 1, 1, 0))
 
-sc_binded %>%
-  group_by(type, numeric_score) %>%
-  count()
-```
-
-```{r}
-sc_wide <- sc_binded %>%
-  pivot_wider(names_from = type, 
-              values_from = numeric_score, 
-              values_fill = 0)
-
-sc_wide %>%
-  select(accountability, learning, strategic_capacity) %>%
-  cor() %>%
-  corrplot::corrplot(type = "upper", order = "hclust", 
-         tl.col = "black", tl.srt = 45)
+sc_high_df <- sc_high_df %>%
+  select(name, id, high_sc)
 ```
 
 ```{r}
 matched <- stringdist_left_join(
-    sc_binded %>% select(-id), 
+    sc_high_df %>% select(-id), 
     ap %>% select(-id),
     by = c("name" = "name"),
     method = "osa",
@@ -196,33 +270,47 @@ matched <- stringdist_left_join(
 
 ```{r}
 matched <- matched %>%
-  mutate(cvp = as.numeric(cvp),
-         slsv = as.numeric(slsv),
-         all_in = as.numeric(all_in)) %>%
-  mutate(index = (cvp + slsv + all_in)/3) %>%
   distinct() %>%
   select(name.x, name.y, everything())
 ```
 
 ```{r}
-matched_copy <- matched %>%
-  filter(index > 0)
+write_csv(matched, here("processed_data", "matched.csv"))
 ```
 
 ```{r}
-write_csv(matched_copy, here("processed_data", "matched.csv"))
+set.seed(1234)
+
+word_cnt_dist <- matched %>%
+  group_by(high_sc) %>%
+  nest() %>% 
+  mutate(boot_res = map(data,
+                        ~ boot(data = stringr::str_count(.$text, '\\w+'),
+                               statistic = function(x, i) mean(x[i], na.rm = T),
+                               R = 1000)),
+         boot_res_ci = map(boot_res, boot.ci, type = "perc"),
+         mean = map(boot_res_ci, ~ .$t0),
+         lower_ci = map(boot_res_ci, ~ .$percent[[4]]),
+         upper_ci = map(boot_res_ci, ~ .$percent[[5]]),
+         n =  map(data, nrow)) %>%
+  select(-data, -boot_res, -boot_res_ci) %>% 
+  unnest(cols = c(n, mean, lower_ci, upper_ci)) %>% 
+  ungroup()
+
+word_cnt_dist$mean[1] - word_cnt_dist$mean[2]
 ```
 
 ```{r}
-text4class <- ap %>% left_join(matched %>% select(-c("name.x")), by = c("name" = "name.y",
-                                 "text" = "text"))
+word_cnt_dist %>%
+  mutate(high_sc_fac = ifelse(high_sc == 1, "High strategic capacity", "Not")) %>%
+  ggplot(aes(x = high_sc_fac, y = mean, 
+             ymax = upper_ci, 
+             ymin = lower_ci)) +
+  geom_col() +
+  geom_text(aes(label = round(mean, 2)), col = "red") +
+  geom_errorbar() +
+  ggthemes::theme_economist() +
+  labs(x = "", y = "Word count")
 
-text4class <- text4class %>%
-  mutate(relevant = ifelse(numeric_score > 0, 1, 0)) %>%
-  select(name, text, type, relevant) %>%
-  distinct()
-```
-
-```{r}
-write_csv(text4class, here("processed_data", "text4class.csv"))
+ggsave(here("figures", "word_cnt.png"))
 ```

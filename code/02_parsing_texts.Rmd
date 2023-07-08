@@ -20,7 +20,7 @@ source(here("functions", "utils.R"))
 file_lists <- list.files(here("outputs"))
 length(file_lists) # 1,231
 
-file_lists <- file_lists[str_detect(file_lists, ".pdf")]
+file_lists <- file_lists[str_detect(file_lists, ".pdf") & str_detect(tolower(file_lists), "action")]
 length(file_lists) # 1,230 (removed one file)
 
 year_outs <- map_dfr(file_lists, extract_years)
@@ -36,7 +36,8 @@ year_outs %>%
     labs(x = "Year",
          y = "Count",
          title = "The years covered by Action Plans",
-         subtitle = glue("The number of reports: {scales::label_comma(, accuracy = 1)(length(file_lists))}"))
+         subtitle = glue("The number of reports: {scales::label_comma(, accuracy = 1)(length(file_lists))}")) +
+  theme_minimal()
 
 ggsave(here("figures", "action_plan.png"))
 ```

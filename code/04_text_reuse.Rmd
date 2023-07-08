@@ -1,0 +1,115 @@
+---
+title: "Parsing texts"
+author: "Jae Yeon Kim"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Install pkgs 
+
+```{r}
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, here, glue, purrr, stringr, textreuse, tidytext, tm, quanteda, plotly)
+
+source(here("functions", "utils.R"))
+```
+
+# Load data 
+
+```{r}
+df <- read_csv(here("processed_data", "matched.csv"))
+
+df$distance <- NULL
+```
+
+# Text reuse
+
+- Useful tutorial: https://bookdown.org/yann_ryan/r-for-newspaper-data/detecting-text-reuse-in-newspaper-articles-.html
+
+```{r}
+# parallelization 
+options("mc.cores" = 6)
+
+# hash the n-gram : each one is given a numerical code, less memory heavy. Randomly selects 2,000 hashes
+minhash <- minhash_generator(n = 2000, seed = 1234)
+
+# documents to corpus
+corpus <- textreuse::TextReuseCorpus(
+  text = df$text, 
+  tokenizer = tokenize_ngrams, n = 3, 
+  minhash_func = minhash, 
+  keep_tokens = FALSE) # no point for keeping tokens
+
+skipped_doc <- skipped(corpus)
+```
+
+```{r}
+df <- df %>%
+  rowid_to_column("id")
+
+df_index <- df %>%
+  select(-text) %>%
+  mutate(doc_id = glue("doc-{id}")) %>%
+  filter(!(doc_id %in% skipped_doc))
+
+df <- df %>%
+  semi_join(df_index) 
+```
+
+```{r}
+# minhash and locality sensitive hashing algorithms
+
+buckets <- lsh(corpus, bands = 1000, progress = FALSE) # 1,000 bands for 2 rows each
+
+candidates <- lsh_candidates(buckets)
+
+jacsimilarity_both <- lsh_compare(
+  candidates, 
+  corpus, 
+  jaccard_similarity) %>% # counts the number of shared hashes
+  arrange(desc(score))
+
+sim_plot <- jacsimilarity_both %>%
+  ggplot(aes(x = score)) +
+  geom_histogram() +
+  theme_bw(18) +
+  labs(x = "Jaccard similarity score", 
+       y = "Count") +
+  ggplot2::annotate("text", x = 0.5, y = 25, label = "Vertical line (score = 0.3)") +
+  ggplot2::geom_vline(xintercept = 0.3, 
+                      col = "red", 
+                      linetype = 3)
+
+plotly::ggplotly(sim_plot)
+ 
+sim_score <- jacsimilarity_both %>%
+  filter(score >= 0.3)
+
+nrow(jacsimilarity_both)
+```
+
+```{r}
+df <- df %>%
+  mutate(doc_id = glue("doc-{id}")) %>%
+  mutate(high_simi = ifelse(doc_id %in% unique(c(sim_score$a, sim_score$b)), 1, 0))
+```
+
+```{r}
+df %>%
+  mutate(high_sc_fac = ifelse(high_sc == 1, "High strategic capacity", "Not")) %>%
+  group_by(high_sc_fac) %>%
+  summarize(mean = mean(high_simi),
+            sd = sd(high_simi), 
+            n = n()) %>%
+  mutate(se = sd/sqrt(n)) %>%
+  ggplot(aes(x = high_sc_fac, y = mean, 
+             ymax = mean + 1.96*se,
+             ymin = mean - 1.96*se)) +
+  geom_pointrange() +
+  scale_y_continuous(label = scales::percent) +
+  labs(x = "", y = "High similar comparisons %") +
+  ggthemes::theme_economist() 
+
+ggsave(here("figures", "text_reuse.png"))
+```
+
