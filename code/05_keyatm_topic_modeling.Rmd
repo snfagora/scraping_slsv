@@ -9,7 +9,7 @@ output: html_document
 
 ```{r}
 if(!require(pacman)) install.packages("pacman")
-pacman::p_load(tidyverse, here, quanteda, readtext, keyATM)
+pacman::p_load(tidyverse, here, quanteda, readtext, keyATM, gt)
 
 source(here("functions", "utils.R"))
 ```
@@ -100,16 +100,6 @@ top_words(out)  # top words can aid selecting keywords
 ```
 
 ```{r}
-out <- keyATM(
-  docs              = docs_withSplit,  # 70% of the corpus
-  no_keyword_topics = 10,               # number of topics without keywords
-  keywords          = keywords,        # selected keywords
-  model             = "base",          # select the model
-  options           = list(seed = 250)
-)
-```
-
-```{r}
 keywords <- list(
   learning = c("learning", "education", "learn"), 
   governanec = c("democratic", "committee", "governance"),
@@ -148,7 +138,8 @@ out <- keyATM(
   model             = "covariates",
   model_settings    = list(covariates_data = vars_selected,
                            covariates_formula = ~ high_sc_fac),
-  options           = list(seed = 250)
+  options           = list(seed = 250),
+  keep              = c("Z", "S")
 )
 
 used_covariates <- covariates_get(out)
@@ -169,6 +160,10 @@ df_topic <- bind_rows(
 df_topic <- df_topic %>%
   mutate(Topic = substring(Topic, 3))
 
+df_topic
+```
+
+```{r}
 df_topic %>%
   ggplot(aes(x = fct_reorder(toupper(Topic), Point), 
              y = Point, ymin = Lower, ymax = Upper, col = label)) +
@@ -181,4 +176,45 @@ df_topic %>%
   ggthemes::theme_economist()
 
 ggsave(here("figures", "covariate_topic.png"))
+```
+
+
+```{r}
+strata_tw <- by_strata_TopicWord(
+  out, keyATM_docs,
+  by = as.vector(vars_selected$high_sc_fac)
+)
+```
+
+```{r}
+top_words(strata_tw, n = 10) %>%
+  reduce(bind_rows) %>%
+  select(c(2,3))
+```
+
+```{r}
+governance_doc <- top_docs(out) %>%
+  pull("2_governanec")
+
+account_doc <- top_docs(out) %>%
+  pull("3_accountability")
+
+rec_docs <- bind_rows(
+df[governance_doc,c(1,3)] %>%
+  distinct() %>%
+  arrange(high_sc) %>%
+  mutate(topic = "Governance"),
+
+df[account_doc,c(1,3)] %>%
+  distinct() %>%
+  arrange(high_sc) %>%
+  mutate(topic = "Accountability")
+)
+
+names(rec_docs) <- c("Name", "High strategy labeled", "Topic name")
+
+rec_docs$Name <- tools::toTitleCase(rec_docs$Name)
+
+rec_docs %>%
+  gt() 
 ```
